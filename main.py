@@ -1,5 +1,6 @@
-from src.proxy import run_proxy
+from src.proxy import HttpProxyServer
 
 
 if __name__ == '__main__':
-    run_proxy()
+    proxy_server = HttpProxyServer()
+    proxy_server.run()
