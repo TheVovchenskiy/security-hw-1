@@ -28,7 +28,19 @@ class HttpProxyRequestHandler(BaseHTTPRequestHandler):
         self.handle_request()
 
     def handle_request(self):
-        host, path, port = self._parse_url()
+        try:
+            host, path, port = self._parse_url()
+        except ValueError:
+            err = http.HTTPStatus.BAD_REQUEST
+            self.send_error(
+                err.value,
+                f"Invalid url '{self.path}'",
+                err.description,
+            )
+            return
+
+        if host is None:
+            host = self.headers['Host']
 
         request = self._modify_request(path)
 
