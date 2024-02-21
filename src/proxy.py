@@ -15,6 +15,8 @@ class ThreadingProxy(ThreadingMixIn, HTTPServer):
 
 
 class HttpProxyRequestHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
     def do_GET(self):
         self.handle_request()
 
@@ -51,7 +53,7 @@ class HttpProxyRequestHandler(BaseHTTPRequestHandler):
                 err = http.HTTPStatus.BAD_GATEWAY
                 self.send_error(
                     err.value,
-                    f'Cannot connect to {host}:{port}',
+                    f"Cannot connect to '{host}:{port}'",
                     err.description,
                 )
             else:
@@ -74,7 +76,7 @@ class HttpProxyRequestHandler(BaseHTTPRequestHandler):
             f'{header_name}: {header_value}'
             for header_name, header_value in self.headers.items()
         )
-        return request_line + NEW_LINE + request_headers + NEW_LINE * 2
+        return request_line + NEW_LINE + request_headers + NEW_LINE
 
     def _send_request(self, conn: socket.socket, request: str):
         conn.sendall(request.encode())
