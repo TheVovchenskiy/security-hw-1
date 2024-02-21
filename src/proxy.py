@@ -1,7 +1,6 @@
 import http
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from http.client import HTTPConnection, InvalidURL
-# import socket
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, ParseResult
 

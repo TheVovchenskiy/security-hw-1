@@ -1,44 +1,11 @@
 from dataclasses import dataclass
 from http import HTTPStatus
 import io
-import socket
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.proxy import HttpProxyRequestHandler, NEW_LINE
-
-
-# class SocketConnectionMock:
-#     def connect(self, addr):
-#         pass
-
-#     def sendall(data: bytes):
-#         pass
-
-#     def recv(bufsize: int) -> bytes:
-#         return 'response'.encode()
-
-
-# class FileMock:
-#     def __init__(self, str_data: str) -> None:
-#         self.data_io = io.BytesIO(str_data.encode())
-#         # self.data = str_data.split(NEW_LINE)
-#         # self.curr_line_idx = 0
-
-#     def readline(self, *args, **kwargs) -> bytes:
-#         return self.data_io.readline(*args, **kwargs)
-
-#     def write(self, *args):
-#         pass
-
-#     def read(self, length: int) -> bytes:
-#         return self.data_io.read(length)
-
-#     def close(self):
-#         pass
-#         # self.data_io.close()
 
 
 class RequestMock:
@@ -50,41 +17,6 @@ class RequestMock:
 
     def sendall(self, b):
         pass
-
-
-# class SocketMock:
-#     def __init__(
-#             self,
-#             received_data: str,
-#             connect_err: Exception = None,
-#     ) -> None:
-#         self.received_data = received_data
-#         self.curr_left_border = 0
-#         self.connect_err = connect_err
-
-#     def __call__(self, *args: Any, **kwds: Any) -> Any:
-#         return self
-
-#     def __enter__(self, *args, **kwargs):
-#         return self
-
-#     def __exit__(self, *args):
-#         pass
-
-#     def connect(self, *args):
-#         if self.connect_err:
-#             raise self.connect_err
-
-#     def sendall(self, *args) -> str:
-#         pass
-
-#     def recv(self, bufsize: int):
-#         if self.curr_left_border + bufsize < len(self.received_data):
-#             return self.received_data[self.curr_left_border:self.curr_left_border+bufsize]
-#         elif self.curr_left_border < len(self.received_data):
-#             return self.received_data[self.curr_left_border:]
-#         else:
-#             return None
 
 
 @dataclass
