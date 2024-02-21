@@ -1,8 +1,9 @@
 import http
 from http.server import BaseHTTPRequestHandler, HTTPServer
-import socket
+from http.client import HTTPConnection, InvalidURL
+# import socket
 from socketserver import ThreadingMixIn
-from urllib.parse import urlparse
+from urllib.parse import urlparse, ParseResult
 
 
 PORT = 8080
@@ -41,51 +42,83 @@ class HttpProxyRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if host is None:
-            host = self.headers['Host']
+        body = self._get_request_body()
+        headers = {
+            header_name: header_value
+            for header_name, header_value in self.headers.items()
+            if header_name != 'Proxy-Connection'
+        }
 
-        request = self._modify_request(path)
+        try:
+            conn = HTTPConnection(host, port)
+        except InvalidURL:
+            err = http.HTTPStatus.BAD_REQUEST
+            self.send_error(
+                err.value,
+                f"Invalid url: '{self.path}'",
+                err.description,
+            )
+        except Exception as e:
+            err = http.HTTPStatus.BAD_GATEWAY
+            self.send_error(
+                err.value,
+                f"Cannot connect to '{host}:{port}'",
+                err.description,
+            )
 
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as conn:
-            try:
-                conn.connect((host, port))
-            except socket.gaierror:
-                err = http.HTTPStatus.BAD_GATEWAY
-                self.send_error(
-                    err.value,
-                    f"Cannot connect to '{host}:{port}'",
-                    err.description,
-                )
-            else:
-                self._send_request(conn, request)
-                self._transmit_response(conn)
+        conn.request(
+            self.command,
+            path,
+            body=body,
+            headers=headers,
+        )
 
-    def _parse_url(self) -> tuple[str | None, str, int]:
+        response = conn.getresponse()
+        self._transmit_response(response)
+
+        conn.close()
+
+    def _parse_url(self) -> tuple[str, str, int]:
         url = urlparse(self.path)
-        host = url.hostname
-        path = url.path if url.path else '/'
-        port = url.port if url.port else 80
+        host = self._get_host(url)
+        path = self._get_relative_path(url)
+        port = self._get_port(url)
 
         return host, path, port
 
-    def _modify_request(self, path: str) -> str:
-        request_line = f'{self.command} {path} {self.protocol_version}'
+    def _get_host(self, url: ParseResult) -> str:
+        host = self.headers['Host']
+        if host is None:
+            raise ValueError("no header 'Host' in request headers")
+        url_host = url.hostname
+        if url_host and host != url_host:
+            raise ValueError("host in headers and in url do not match")
 
-        del self.headers['Proxy-Connection']
-        request_headers = NEW_LINE.join(
-            f'{header_name}: {header_value}'
-            for header_name, header_value in self.headers.items()
-        )
-        return request_line + NEW_LINE + request_headers + NEW_LINE
+        return host
 
-    def _send_request(self, conn: socket.socket, request: str):
-        conn.sendall(request.encode())
+    def _get_relative_path(self, url: ParseResult) -> str:
+        return url.path if url.path else '/'
 
-    def _transmit_response(self, conn: socket.socket):
-        response = conn.recv(BUFSIZE)
-        while response:
-            self.wfile.write(response)
-            response = conn.recv(BUFSIZE)
+    def _get_port(self, url: ParseResult) -> int:
+        return url.port if url.port else 80
+
+    def _get_request_body(self) -> bytes | None:
+        content_length = self.headers['Content-Length']
+        if content_length:
+            content_length = int(content_length)
+            body = self.rfile.read(content_length)
+        else:
+            body = None
+
+        return body
+
+    def _transmit_response(self, response):
+        self.send_response(response.status, response.reason)
+        for header, value in response.getheaders():
+            self.send_header(header, value)
+        self.end_headers()
+
+        self.wfile.write(response.read())
 
 
 class HttpProxyServer:
