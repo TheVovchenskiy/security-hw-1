@@ -2,3 +2,7 @@ venv
 __pycache__
 .vscode
 .coverage
+certs
+ca.crt
+ca.key
+cert.key

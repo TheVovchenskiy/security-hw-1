@@ -1,7 +1,8 @@
 import http
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from http.client import HTTPConnection, InvalidURL
+from http.client import HTTPConnection, HTTPSConnection, InvalidURL
 from socketserver import ThreadingMixIn
+import ssl
 from urllib.parse import urlparse, ParseResult
 
 
@@ -28,6 +29,64 @@ class HttpProxyRequestHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.handle_request()
+
+    def do_CONNECT(self):
+        self.handle_connect_request()
+
+    def handle_connect_request(self):
+        # print(self.requestline)
+        # print(self.headers)
+        try:
+            host, path, port = self._parse_url()
+        except ValueError:
+            err = http.HTTPStatus.BAD_REQUEST
+            self.send_error(
+                err.value,
+                f"Invalid url '{self.path}'",
+                err.description,
+            )
+            return
+        
+        self.send_response(200, 'Connection established')
+        self.end_headers()
+
+        client_conn = self.connection
+        client_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        client_conn = client_context.wrap_socket(
+            client_conn,
+            server_side=True,
+            certfile='path/to/cert.pem',
+            keyfile='path/to/key.pem',
+            ssl_version=ssl.PROTOCOL_TLS,
+        )
+
+        try:
+            target_conn = HTTPSConnection(
+                host,
+                port,
+                context=ssl.create_default_context(),
+            )
+        except InvalidURL:
+            err = http.HTTPStatus.BAD_REQUEST
+            self.send_error(
+                err.value,
+                f"Invalid url: '{self.path}'",
+                err.description,
+            )
+        except Exception as e:
+            err = http.HTTPStatus.BAD_GATEWAY
+            self.send_error(
+                err.value,
+                f"Cannot connect to '{host}:{port}'",
+                err.description,
+            )
+        
+        self._forward_data(client_conn, target_conn)
+
+    def _forward_data(self, client_conn, target_conn):
+        # Функция для пересылки данных между клиентом и сервером
+        # Это может быть реализовано с использованием select и обработки сокетов
+        pass
 
     def handle_request(self):
         try:
