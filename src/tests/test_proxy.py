@@ -33,6 +33,8 @@ def test_parse_correct_url(mock_handle_request):
         ParseUrlData('http://example.com/test', 'example.com', '/test', 80),
         ParseUrlData('http://example.com:8194/test',
                      'example.com', '/test', 8194),
+        ParseUrlData('http://example.com:8194',
+                     'example.com', '/', 8194),
         ParseUrlData('http://example.com:80/test', 'example.com', '/test', 80),
         ParseUrlData('http://example.com/', 'example.com', '/', 80),
         ParseUrlData('http://example.com', 'example.com', '/', 80),

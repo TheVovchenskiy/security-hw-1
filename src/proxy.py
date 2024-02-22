@@ -1,14 +1,22 @@
 import http
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from http.client import HTTPConnection, HTTPSConnection, InvalidURL
+import os
+import select
+import socket
 from socketserver import ThreadingMixIn
 import ssl
 from urllib.parse import urlparse, ParseResult
 
+from src.cert_utils import generate_host_certificate
+
 
 PORT = 8080
 BUFSIZE = 4096
+
 NEW_LINE = '\r\n'
+COLON = ':'
+DOUBLE_SLAH = '//'
 
 
 class ThreadingProxy(ThreadingMixIn, HTTPServer):
@@ -32,61 +40,60 @@ class HttpProxyRequestHandler(BaseHTTPRequestHandler):
 
     def do_CONNECT(self):
         self.handle_connect_request()
+        self.close_connection = True
 
     def handle_connect_request(self):
-        # print(self.requestline)
-        # print(self.headers)
-        try:
-            host, path, port = self._parse_url()
-        except ValueError:
-            err = http.HTTPStatus.BAD_REQUEST
-            self.send_error(
-                err.value,
-                f"Invalid url '{self.path}'",
-                err.description,
-            )
-            return
-        
+        host, port = self.path.split(COLON)
+        port = int(port)
+
+        cert_path, key_path = generate_host_certificate(host)
+
         self.send_response(200, 'Connection established')
         self.end_headers()
 
-        client_conn = self.connection
         client_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        client_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
         client_conn = client_context.wrap_socket(
-            client_conn,
+            self.connection,
             server_side=True,
-            certfile='path/to/cert.pem',
-            keyfile='path/to/key.pem',
-            ssl_version=ssl.PROTOCOL_TLS,
         )
 
-        try:
-            target_conn = HTTPSConnection(
-                host,
-                port,
-                context=ssl.create_default_context(),
-            )
-        except InvalidURL:
-            err = http.HTTPStatus.BAD_REQUEST
-            self.send_error(
-                err.value,
-                f"Invalid url: '{self.path}'",
-                err.description,
-            )
-        except Exception as e:
-            err = http.HTTPStatus.BAD_GATEWAY
-            self.send_error(
-                err.value,
-                f"Cannot connect to '{host}:{port}'",
-                err.description,
-            )
-        
+        target_context = ssl.create_default_context()
+        target_conn = target_context.wrap_socket(
+            socket.create_connection((host, port)),
+            server_hostname=host,
+        )
+
         self._forward_data(client_conn, target_conn)
 
-    def _forward_data(self, client_conn, target_conn):
-        # Функция для пересылки данных между клиентом и сервером
-        # Это может быть реализовано с использованием select и обработки сокетов
-        pass
+    def _forward_data(
+        self,
+        client_conn: ssl.SSLSocket,
+        target_conn: ssl.SSLSocket,
+    ):
+        inputs = [client_conn, target_conn]
+        keep_running = True
+
+        while keep_running:
+            readable, _, exceptional = select.select(inputs, [], inputs, 10)
+            if exceptional:
+                break
+
+            for s in readable:
+                other = target_conn if s is client_conn else client_conn
+                try:
+                    data = s.recv(BUFSIZE)
+                    if data:
+                        other.sendall(data)
+                    else:
+                        keep_running = False
+                        break
+                except socket.error as e:
+                    keep_running = False
+                    break
+
+        client_conn.close()
+        target_conn.close()
 
     def handle_request(self):
         try:
@@ -145,9 +152,11 @@ class HttpProxyRequestHandler(BaseHTTPRequestHandler):
         return host, path, port
 
     def _get_host(self, url: ParseResult) -> str:
-        host = self.headers['Host']
+        host: str | None = self.headers['Host']
         if host is None:
             raise ValueError("no header 'Host' in request headers")
+        # if COLON in host:
+        #     host = host.split(COLON, 1)[0]
         url_host = url.hostname
         if url_host and host != url_host:
             raise ValueError("host in headers and in url do not match")

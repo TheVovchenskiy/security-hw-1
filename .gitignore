@@ -6,3 +6,4 @@ certs
 ca.crt
 ca.key
 cert.key
+*_serial_number.txt
