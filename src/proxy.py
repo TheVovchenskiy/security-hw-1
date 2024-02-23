@@ -1,7 +1,6 @@
 import http
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from http.client import HTTPConnection, HTTPSConnection, InvalidURL
-import os
 import select
 import socket
 from socketserver import ThreadingMixIn
@@ -23,7 +22,7 @@ class ThreadingProxy(ThreadingMixIn, HTTPServer):
     pass
 
 
-class HttpProxyRequestHandler(BaseHTTPRequestHandler):
+class ProxyRequestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self):
@@ -48,21 +47,38 @@ class HttpProxyRequestHandler(BaseHTTPRequestHandler):
 
         cert_path, key_path = generate_host_certificate(host)
 
+        try:
+            target_context = ssl.create_default_context()
+            target_conn = target_context.wrap_socket(
+                socket.create_connection((host, port)),
+                server_hostname=host,
+            )
+        except socket.error:
+            err = http.HTTPStatus.BAD_GATEWAY
+            self.send_error(
+                err.value,
+                f"Cannot connect to '{host}:{port}'",
+                err.description,
+            )
+            return
+        
         self.send_response(200, 'Connection established')
         self.end_headers()
 
-        client_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        client_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
-        client_conn = client_context.wrap_socket(
-            self.connection,
-            server_side=True,
-        )
-
-        target_context = ssl.create_default_context()
-        target_conn = target_context.wrap_socket(
-            socket.create_connection((host, port)),
-            server_hostname=host,
-        )
+        try:
+            client_context = ssl.create_default_context(
+                ssl.Purpose.CLIENT_AUTH)
+            client_context.load_cert_chain(
+                certfile=cert_path, keyfile=key_path)
+            client_conn = client_context.wrap_socket(
+                self.connection,
+                server_side=True,
+            )
+        except Exception as e:
+            target_conn.close()
+            raise RuntimeError(
+                'something went wrong while wrapping client connection'
+            ) from e
 
         self._forward_data(client_conn, target_conn)
 
@@ -155,8 +171,6 @@ class HttpProxyRequestHandler(BaseHTTPRequestHandler):
         host: str | None = self.headers['Host']
         if host is None:
             raise ValueError("no header 'Host' in request headers")
-        # if COLON in host:
-        #     host = host.split(COLON, 1)[0]
         url_host = url.hostname
         if url_host and host != url_host:
             raise ValueError("host in headers and in url do not match")
@@ -188,10 +202,10 @@ class HttpProxyRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(response.read())
 
 
-class HttpProxyServer:
+class ProxyServer:
     def __init__(self, port=PORT) -> None:
         self.port = port
-        self.proxy_server = ThreadingProxy(('', port), HttpProxyRequestHandler)
+        self.proxy_server = ThreadingProxy(('', port), ProxyRequestHandler)
 
     def run(self):
         print(f'proxy server is running on port {self.port}')

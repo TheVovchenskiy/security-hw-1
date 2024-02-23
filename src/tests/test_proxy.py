@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.proxy import HttpProxyRequestHandler, NEW_LINE
+from src.proxy import ProxyRequestHandler, NEW_LINE
 
 
 class RequestMock:
@@ -27,7 +27,7 @@ class ParseUrlData:
     expected_port: int
 
 
-@patch.object(HttpProxyRequestHandler, 'handle_request')
+@patch.object(ProxyRequestHandler, 'handle_request')
 def test_parse_correct_url(mock_handle_request):
     test_data = [
         ParseUrlData('http://example.com/test', 'example.com', '/test', 80),
@@ -49,7 +49,7 @@ def test_parse_correct_url(mock_handle_request):
             data=f'GET {test_case.url} HTTP/1.1' + NEW_LINE +
             'Host: example.com' + NEW_LINE
         )
-        handler = HttpProxyRequestHandler(
+        handler = ProxyRequestHandler(
             request_mock,
             MagicMock(),
             MagicMock(),
@@ -61,7 +61,7 @@ def test_parse_correct_url(mock_handle_request):
         assert actual_port == test_case.expected_port
 
 
-@patch.object(HttpProxyRequestHandler, 'handle_request')
+@patch.object(ProxyRequestHandler, 'handle_request')
 def test_parse_invalid_url(mock_handle_request):
     test_data = [
         'http://example.com:dfsd/test',
@@ -75,7 +75,7 @@ def test_parse_invalid_url(mock_handle_request):
             data=f'GET {url} HTTP/1.1' + NEW_LINE,
         )
         # request_mock.makefile = MagicMock()
-        handler = HttpProxyRequestHandler(
+        handler = ProxyRequestHandler(
             request_mock,
             MagicMock(),
             MagicMock(),
@@ -129,14 +129,14 @@ class GetRequestBodyData:
 #         assert actual.decode() == test_case.expected
 
 
-@patch.object(HttpProxyRequestHandler, '_parse_url', side_effect=ValueError)
+@patch.object(ProxyRequestHandler, '_parse_url', side_effect=ValueError)
 def test_handle_request_value_error(mock):
     request_mock = RequestMock(
         data='GET http://example.com/test HTTP/1.1' + NEW_LINE
     )
 
-    with patch.object(HttpProxyRequestHandler, 'send_error') as send_error_mock:
-        handler = HttpProxyRequestHandler(
+    with patch.object(ProxyRequestHandler, 'send_error') as send_error_mock:
+        handler = ProxyRequestHandler(
             request_mock,
             MagicMock(),
             MagicMock(),
@@ -149,13 +149,13 @@ def test_handle_request_value_error(mock):
     )
 
 
-@patch.object(HttpProxyRequestHandler, 'do_GET')
+@patch.object(ProxyRequestHandler, 'do_GET')
 def test_get_method(get_mock):
     request_mock = RequestMock(
         data='GET http://example.com/test HTTP/1.1' + NEW_LINE
     )
 
-    HttpProxyRequestHandler(
+    ProxyRequestHandler(
         request_mock,
         MagicMock(),
         MagicMock(),
@@ -164,13 +164,13 @@ def test_get_method(get_mock):
     get_mock.assert_called_once()
 
 
-@patch.object(HttpProxyRequestHandler, 'do_POST')
+@patch.object(ProxyRequestHandler, 'do_POST')
 def test_post_method(post_mock):
     request_mock = RequestMock(
         data='POST http://example.com/test HTTP/1.1' + NEW_LINE
     )
 
-    HttpProxyRequestHandler(
+    ProxyRequestHandler(
         request_mock,
         MagicMock(),
         MagicMock(),
@@ -179,13 +179,13 @@ def test_post_method(post_mock):
     post_mock.assert_called_once()
 
 
-@patch.object(HttpProxyRequestHandler, 'do_HEAD')
+@patch.object(ProxyRequestHandler, 'do_HEAD')
 def test_head_method(head_mock):
     request_mock = RequestMock(
         data='HEAD http://example.com/test HTTP/1.1' + NEW_LINE
     )
 
-    HttpProxyRequestHandler(
+    ProxyRequestHandler(
         request_mock,
         MagicMock(),
         MagicMock(),
@@ -194,13 +194,13 @@ def test_head_method(head_mock):
     head_mock.assert_called_once()
 
 
-@patch.object(HttpProxyRequestHandler, 'do_OPTIONS')
+@patch.object(ProxyRequestHandler, 'do_OPTIONS')
 def test_options_method(options_mock):
     request_mock = RequestMock(
         data='OPTIONS http://example.com/test HTTP/1.1' + NEW_LINE
     )
 
-    HttpProxyRequestHandler(
+    ProxyRequestHandler(
         request_mock,
         MagicMock(),
         MagicMock(),

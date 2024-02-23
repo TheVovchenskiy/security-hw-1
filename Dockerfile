@@ -8,7 +8,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
 COPY src/ src/
-
-# EXPOSE 8080
+COPY certs/ certs/
+COPY serial_numbers/ serial_numbers/
+COPY ca.crt ca.crt
+COPY ca.key ca.key
+COPY cert.key cert.key
 
 CMD [ "python3", "main.py" ]
