@@ -2,6 +2,7 @@ import http
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from http.client import HTTPConnection, HTTPSConnection, InvalidURL
 import json
+import os
 import select
 import socket
 from socketserver import BaseRequestHandler, ThreadingMixIn
@@ -11,16 +12,13 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse, ParseResult
 
 from src.cert_utils import generate_host_certificate
+import config
 
-
-PORT = 8080
 BUFSIZE = 4096
 
 NEW_LINE = '\r\n'
 COLON = ':'
 DOUBLE_SLAH = '//'
-
-DB_NAME = 'proxy.sqlite3'
 
 
 class ThreadingProxy(ThreadingMixIn, HTTPServer):
@@ -305,7 +303,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
 
 class ProxyServer:
-    def __init__(self, port=PORT) -> None:
+    def __init__(self, port=config.PROXY_PORT) -> None:
         self.port = port
         self.init_db()
         self.proxy_server = ThreadingProxy(
@@ -316,7 +314,7 @@ class ProxyServer:
         )
 
     def init_db(self):
-        self.db_conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+        self.db_conn = sqlite3.connect(config.DB, check_same_thread=False)
         self.db_cursor = self.db_conn.cursor()
         self.db_cursor.execute('''
             CREATE TABLE IF NOT EXISTS requests (
@@ -353,4 +351,3 @@ class ProxyServer:
         finally:
             self.db_cursor.close()
             self.db_conn.close()
-            

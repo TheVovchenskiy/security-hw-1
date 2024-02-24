@@ -1,37 +1,37 @@
-from socket import SocketIO
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, g
 import sqlite3
-import threading
 
-from src.proxy import DB_NAME
-
-
-API_PORT = 8000
-APP_NAME = 'proxy'
+import config
 
 
-app = Flask(APP_NAME)
-# socketio = SocketIO(app, 'r')
+DELAY_ON_EXCEPTION = 0.5
+MAX_ATTEMPTS = 5
 
+
+def get_db():
+    if 'db' not in g:
+        g.db = sqlite3.connect(config.DB)
+    return g.db
+
+
+app = Flask(config.APP_NAME)
 
 
 @app.route('/requests', methods=['GET'])
 def get_requests():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM requests')
     requests = cursor.fetchall()
-    conn.close()
     return jsonify(requests)
 
 
 @app.route('/requests/<int:request_id>', methods=['GET'])
 def get_request(request_id):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM requests WHERE id = ?', (request_id,))
     request_data = cursor.fetchone()
-    conn.close()
     return jsonify(request_data)
 
 
@@ -47,12 +47,9 @@ def scan_request(request_id):
     pass
 
 
-def run_api_server(port: int = API_PORT):
-    # socketio.run(app)
+def run_api_server(port: int = config.API_PORT):
     app.run(port=port, debug=True)
-    # print(f'api is running on port {port}')
 
 
 if __name__ == '__main__':
-    api_thread = threading.Thread(target=run_api_server)
-    api_thread.start()
+    run_api_server()

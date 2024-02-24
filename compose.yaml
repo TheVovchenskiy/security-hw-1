@@ -1,0 +1,16 @@
+services:
+  proxy_server:
+    restart: always
+    image: proxy-server
+    ports: 
+      - "8080:8080"
+    volumes:
+      - ./db:/app/db
+  
+  proxy_api:
+    restart: always
+    image:  proxy-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./db:/app/db
