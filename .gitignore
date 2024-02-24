@@ -7,3 +7,4 @@ ca.crt
 ca.key
 cert.key
 serial_numbers
+*.sqlite3
