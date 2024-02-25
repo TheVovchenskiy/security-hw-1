@@ -13,8 +13,8 @@ add-trusted-cert: ca.crt
 
 .PHONY: docker-build
 docker-build: ./ca.key ./ca.crt ./cert.key ./certs/ ./serial_numbers/
-	docker build -t proxy-server .
-	docker build -t proxy-api -f src/Dockerfile .
+	docker build -t proxy-server -f Dockerfile.proxy .
+	docker build -t proxy-api -f Dockerfile.api .
 
 .PHONY: docker-compose-up
 docker-compose-up: docker-build
