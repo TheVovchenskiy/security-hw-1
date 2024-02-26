@@ -12,6 +12,8 @@ import ssl
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
+import httptools
+
 from src.cert_utils import generate_host_certificate
 import config
 
@@ -33,6 +35,8 @@ class Request:
         if request_handler:
             self.request_handler = request_handler
             self._parse_request()
+        elif 'raw' in kwargs:
+            self._parse_raw(kwargs['raw'])
         else:
             self.method = kwargs.get('method')
             self.host = kwargs.get('host')
@@ -59,10 +63,43 @@ class Request:
             post_params=json.loads(post_params)
         )
 
+    @classmethod
+    def from_raw_request(cls, raw_request: bytes):
+        return cls(raw=raw_request)
+
+    def _parse_raw(self, raw_request):
+        self.headers = {}
+        self.body = None
+        p = httptools.HttpRequestParser(self)
+        p.feed_data(raw_request)
+
+        self.method = p.get_method()
+        self.host, self.port = self._parse_host_port(
+            self.headers.get('Host', None),
+        )
+        self._parse_get_params()
+        self._parse_post_params()
+        self._parse_cookies()
+
+    def on_header(self, name: bytes, value: bytes):
+        self.headers[name.decode()] = value.decode()
+
+    def on_body(self, body: bytes):
+        if self.body is None:
+            self.body = b''
+        self.body += body
+
+    def on_url(self, url: bytes):
+        self.path = url.decode()
+
     def _parse_request(self):
+        self._parse_headers()
+        self._parse_body()
         try:
             self._parse_path()
-            self._parse_host_port()
+            self.host, self.port = self._parse_host_port(
+                self.headers.get('Host', None),
+            )
         except ValueError:
             err = http.HTTPStatus.BAD_REQUEST
             self.send_error(
@@ -71,8 +108,6 @@ class Request:
                 err.description,
             )
             return
-        self._parse_body()
-        self._parse_headers()
         self._parse_cookies()
         self._parse_method()
         self._parse_get_params()
@@ -82,18 +117,18 @@ class Request:
         url = urlparse(self.request_handler.path)
         self.path = url.path if url.path else '/'
 
-    def _parse_host_port(self) -> None:
-        host_port: str = self.request_handler.headers['Host']
-        if host_port is None:
+    @staticmethod
+    def _parse_host_port(host_header_value: str) -> tuple[str, int]:
+        if host_header_value is None:
             raise ValueError("no header 'Host' in request headers")
 
-        host_port = host_port.split(COLON, 1)
-        if len(host_port) == 2:
-            self.host = host_port[0]
-            self.port = int(host_port[-1])
-        elif len(host_port) == 1:
-            self.host = host_port[0]
-            self.port = 80
+        host_header_value = host_header_value.split(COLON, 1)
+        if len(host_header_value) == 2:
+            return host_header_value[0], int(host_header_value[-1])
+
+        elif len(host_header_value) == 1:
+            return host_header_value[0], 80
+
         else:
             raise ValueError("invalid header 'Host' in request headers")
 
@@ -114,13 +149,13 @@ class Request:
 
     def _parse_cookies(self) -> None:
         self.cookies = SimpleCookie()
-        self.cookies.load(self.request_handler.headers.get('Cookie', ''))
+        self.cookies.load(self.headers.get('Cookie', ''))
 
     def _parse_method(self):
         self.method = self.request_handler.command
 
     def _parse_get_params(self) -> None:
-        self.get_params = parse_qs(urlparse(self.request_handler.path).query)
+        self.get_params = parse_qs(urlparse(self.path).query)
         self.get_params = {
             k: v[0] if len(v) == 1 else v
             for k, v in self.get_params.items()
@@ -222,6 +257,8 @@ class Response:
             self.message = response.reason
             self.headers = dict(response.getheaders())
             self.body = response.read().decode()
+        elif 'raw' in kwargs:
+            self._parse_raw(kwargs['raw'])
         else:
             self.code = kwargs.code
             self.message = kwargs.message
@@ -237,6 +274,27 @@ class Response:
             headers=headers,
             body=body,
         )
+
+    @classmethod
+    def from_raw_response(cls, raw_request: bytes):
+        return cls(raw=raw_request)
+
+    def _parse_raw(self, raw_response: bytes):
+        self.headers = {}
+        self.body = b''
+        p = httptools.HttpResponseParser(self)
+        p.feed_data(raw_response)
+
+        self.code = p.get_status_code()
+        self.message = http.HTTPStatus(self.code).phrase
+
+    def on_header(self, name: bytes, value: bytes):
+        self.headers[name.decode()] = value.decode()
+
+    def on_body(self, body: bytes):
+        if self.body is None:
+            self.body = b''
+        self.body += body
 
     def save_to_db(
         self,
@@ -365,6 +423,9 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         inputs = [client_conn, target_conn]
         keep_running = True
 
+        raw_request = b''
+        raw_response = b''
+
         while keep_running:
             readable, _, exceptional = select.select(inputs, [], inputs, 10)
             if exceptional:
@@ -375,6 +436,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 try:
                     data = s.recv(BUFSIZE)
                     if data:
+                        if s is client_conn:
+                            raw_request += data
+                        elif s is target_conn:
+                            raw_response += data
                         other.sendall(data)
                     else:
                         keep_running = False
@@ -382,6 +447,12 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 except socket.error as e:
                     keep_running = False
                     break
+
+        request = Request.from_raw_request(raw_request)
+        request_id = request.save_to_db(self.db_conn, self.db_cursor)
+
+        response = Response.from_raw_response(raw_response)
+        response.save_to_db(request_id, self.db_conn, self.db_cursor)
 
         client_conn.close()
         target_conn.close()
