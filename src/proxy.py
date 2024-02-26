@@ -1,3 +1,4 @@
+import copy
 import http
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -19,6 +20,8 @@ BUFSIZE = 4096
 NEW_LINE = '\r\n'
 COLON = ':'
 DOUBLE_SLAH = '//'
+DOUBLE_QUOTES = '"'
+SINGLE_QUOTES = "'"
 
 
 class Request:
@@ -29,7 +32,7 @@ class Request:
     ) -> None:
         if request_handler:
             self.request_handler = request_handler
-            self.parse_request()
+            self._parse_request()
         else:
             self.method = kwargs.get('method')
             self.host = kwargs.get('host')
@@ -43,7 +46,7 @@ class Request:
 
     @classmethod
     def from_db(cls, db_row):
-        method, host, port, path, get_params, headers, cookies, body, post_params = db_row
+        method, host, port, path, get_params, headers, cookies, body, post_params = db_row[1:]
         return cls(
             method=method,
             host=host,
@@ -56,10 +59,10 @@ class Request:
             post_params=json.loads(post_params)
         )
 
-    def parse_request(self):
+    def _parse_request(self):
         try:
-            self.parse_path()
-            self.parse_host_port()
+            self._parse_path()
+            self._parse_host_port()
         except ValueError:
             err = http.HTTPStatus.BAD_REQUEST
             self.send_error(
@@ -68,18 +71,18 @@ class Request:
                 err.description,
             )
             return
-        self.parse_body()
-        self.parse_headers()
-        self.parse_cookies()
-        self.parse_method()
-        self.parse_get_params()
-        self.parse_post_params()
+        self._parse_body()
+        self._parse_headers()
+        self._parse_cookies()
+        self._parse_method()
+        self._parse_get_params()
+        self._parse_post_params()
 
-    def parse_path(self) -> None:
+    def _parse_path(self) -> None:
         url = urlparse(self.request_handler.path)
         self.path = url.path if url.path else '/'
 
-    def parse_host_port(self) -> None:
+    def _parse_host_port(self) -> None:
         host_port: str = self.request_handler.headers['Host']
         if host_port is None:
             raise ValueError("no header 'Host' in request headers")
@@ -94,7 +97,7 @@ class Request:
         else:
             raise ValueError("invalid header 'Host' in request headers")
 
-    def parse_body(self) -> None:
+    def _parse_body(self) -> None:
         content_length = self.request_handler.headers['Content-Length']
         if content_length:
             content_length = int(content_length)
@@ -102,28 +105,28 @@ class Request:
         else:
             self.body = None
 
-    def parse_headers(self) -> None:
+    def _parse_headers(self) -> None:
         self.headers = {
             header_name: header_value
             for header_name, header_value in self.request_handler.headers.items()
             if header_name not in ['Proxy-Connection']
         }
 
-    def parse_cookies(self) -> None:
+    def _parse_cookies(self) -> None:
         self.cookies = SimpleCookie()
         self.cookies.load(self.request_handler.headers.get('Cookie', ''))
 
-    def parse_method(self):
+    def _parse_method(self):
         self.method = self.request_handler.command
 
-    def parse_get_params(self) -> None:
+    def _parse_get_params(self) -> None:
         self.get_params = parse_qs(urlparse(self.request_handler.path).query)
         self.get_params = {
             k: v[0] if len(v) == 1 else v
             for k, v in self.get_params.items()
         }
 
-    def parse_post_params(self) -> None:
+    def _parse_post_params(self) -> None:
         content_type = self.headers.get('Content-Type', '')
         self.post_params = parse_qs(self.body.decode()) \
             if 'application/x-www-form-urlencoded' in content_type else {}
@@ -150,13 +153,90 @@ class Request:
         db_conn.commit()
         return db_cursor.lastrowid
 
+    def __iter__(self):
+        self._injection_points = self._get_injection_points()
+        self._current_injection_index = 0
+        return self
+
+    def __next__(self):
+        if self._current_injection_index >= len(self._injection_points):
+            raise StopIteration
+
+        injection_point = self._injection_points[self._current_injection_index]
+        self._current_injection_index += 1
+
+        modified_request = copy.deepcopy(self)
+        key, value = injection_point
+        if key in modified_request.get_params:
+            modified_request.get_params[key] = value
+        elif key in modified_request.post_params:
+            modified_request.post_params[key] = value
+        elif key in modified_request.headers:
+            modified_request.headers[key] = value
+        elif key == 'Cookie':
+            modified_request.cookies.load(value)
+            if key in modified_request.headers:
+                modified_request.headers[key] = modified_request.cookies.output(
+                    header="Cookie:")
+
+        return modified_request
+
+    def _get_injection_points(self):
+        injection_points = []
+        for key in self.get_params:
+            injection_points.append(
+                (key, self.get_params[key] + SINGLE_QUOTES))
+            injection_points.append(
+                (key, self.get_params[key] + DOUBLE_QUOTES))
+
+        for key in self.post_params:
+            injection_points.append(
+                (key, self.post_params[key] + SINGLE_QUOTES))
+            injection_points.append(
+                (key, self.post_params[key] + DOUBLE_QUOTES))
+
+        for key in self.headers:
+            if key == 'Cookie':
+                continue
+            injection_points.append((key, self.headers[key] + SINGLE_QUOTES))
+            injection_points.append((key, self.headers[key] + DOUBLE_QUOTES))
+
+        if self.cookies:
+            for key in self.cookies:
+                injection_points.append(
+                    ('Cookie', f"{key}={self.cookies[key].value}'"))
+                injection_points.append(
+                    ('Cookie', f"{key}={self.cookies[key].value}\""))
+
+        return injection_points
+
 
 class Response:
-    def __init__(self, response: HTTPResponse) -> None:
-        self.code = response.status
-        self.message = response.reason
-        self.headers = dict(response.getheaders())
-        self.body = response.read().decode()
+    def __init__(
+        self,
+        response: HTTPResponse = None,
+        **kwargs
+    ) -> None:
+        if response:
+            self.code = response.status
+            self.message = response.reason
+            self.headers = dict(response.getheaders())
+            self.body = response.read().decode()
+        else:
+            self.code = kwargs.code
+            self.message = kwargs.message
+            self.headers = kwargs.headers
+            self.body = kwargs.body
+
+    @classmethod
+    def from_db(cls, db_row):
+        code, message, headers, body = db_row[2:]
+        return cls(
+            code=code,
+            message=message,
+            headers=headers,
+            body=body,
+        )
 
     def save_to_db(
         self,
