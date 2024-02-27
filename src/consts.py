@@ -1,0 +1,5 @@
+NEW_LINE = '\r\n'
+COLON = ':'
+DOUBLE_SLAH = '//'
+DOUBLE_QUOTES = '"'
+SINGLE_QUOTES = "'"

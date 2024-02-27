@@ -91,8 +91,7 @@ def scan_request(request_id):
             modified_request,
             is_https,
         )
-        if modified_response.code != original_response.code \
-                or len(modified_response.body) != len(original_response.body):
+        if modified_response != original_response:
             vulnerabilities.append({
                 'param': modified_request._injection_points[original_request._current_injection_index - 1][0],
                 'type': 'SQL Injection'

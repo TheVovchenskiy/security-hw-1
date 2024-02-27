@@ -1,351 +1,21 @@
-import copy
-import http
-from http.cookies import SimpleCookie
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from http.client import HTTPConnection, HTTPResponse, HTTPSConnection, InvalidURL
-import json
+from http.client import HTTPConnection, HTTPSConnection, InvalidURL
 import select
 import socket
 from socketserver import BaseRequestHandler, ThreadingMixIn
 import sqlite3
 import ssl
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse
 
-import httptools
 
+from src.response import Response
+from src.request import Request
+from src.consts import COLON, NEW_LINE
 from src.cert_utils import generate_host_certificate
 import config
 
 BUFSIZE = 4096
-
-NEW_LINE = '\r\n'
-COLON = ':'
-DOUBLE_SLAH = '//'
-DOUBLE_QUOTES = '"'
-SINGLE_QUOTES = "'"
-
-
-class Request:
-    def __init__(
-        self,
-        request_handler: BaseHTTPRequestHandler = None,
-        **kwargs,
-    ) -> None:
-        if request_handler:
-            self.request_handler = request_handler
-            self._parse_request()
-        elif 'raw' in kwargs:
-            self._parse_raw(kwargs['raw'])
-        else:
-            self.method = kwargs.get('method')
-            self.host = kwargs.get('host')
-            self.port = kwargs.get('port', 80)
-            self.path = kwargs.get('path')
-            self.get_params = kwargs.get('get_params', {})
-            self.headers = kwargs.get('headers', {})
-            self.cookies = kwargs.get('cookies', SimpleCookie())
-            self.body = kwargs.get('body')
-            self.post_params = kwargs.get('post_params', {})
-
-    @classmethod
-    def from_db(cls, db_row):
-        (
-            method,
-            host,
-            port,
-            path,
-            get_params,
-            headers,
-            cookies,
-            body,
-            post_params,
-        ) = db_row[
-            1:10]
-        return cls(
-            method=method,
-            host=host,
-            port=port,
-            path=path,
-            get_params=json.loads(get_params),
-            headers=json.loads(headers),
-            cookies=SimpleCookie(json.loads(cookies)),
-            body=body,
-            post_params=json.loads(post_params)
-        )
-
-    @classmethod
-    def from_raw_request(cls, raw_request: bytes):
-        return cls(raw=raw_request)
-
-    def _parse_raw(self, raw_request):
-        self.headers = {}
-        self.body = None
-        p = httptools.HttpRequestParser(self)
-        p.feed_data(raw_request)
-
-        self.method = p.get_method().decode()
-        self.host, self.port = self._parse_host_port(
-            self.headers.get('Host', None),
-        )
-        self._parse_get_params()
-        self._parse_post_params()
-        self._parse_cookies()
-
-    def on_header(self, name: bytes, value: bytes):
-        self.headers[name.decode()] = value.decode()
-
-    def on_body(self, body: bytes):
-        if self.body is None:
-            self.body = b''
-        self.body += body
-
-    def on_url(self, url: bytes):
-        self.path = url.decode()
-
-    def _parse_request(self):
-        self._parse_headers()
-        self._parse_body()
-        try:
-            self._parse_path()
-            self.host, self.port = self._parse_host_port(
-                self.headers.get('Host', None),
-            )
-        except ValueError:
-            err = http.HTTPStatus.BAD_REQUEST
-            self.send_error(
-                err.value,
-                f"Invalid url '{self.request_handler.path}'",
-                err.description,
-            )
-            return
-        self._parse_cookies()
-        self._parse_method()
-        self._parse_get_params()
-        self._parse_post_params()
-
-    def _parse_path(self) -> None:
-        url = urlparse(self.request_handler.path)
-        self.path = url.path if url.path else '/'
-
-    @staticmethod
-    def _parse_host_port(host_header_value: str) -> tuple[str, int]:
-        if host_header_value is None:
-            raise ValueError("no header 'Host' in request headers")
-
-        host_header_value = host_header_value.split(COLON, 1)
-        if len(host_header_value) == 2:
-            return host_header_value[0], int(host_header_value[-1])
-
-        elif len(host_header_value) == 1:
-            return host_header_value[0], 80
-
-        else:
-            raise ValueError("invalid header 'Host' in request headers")
-
-    def _parse_body(self) -> None:
-        content_length = self.request_handler.headers['Content-Length']
-        if content_length:
-            content_length = int(content_length)
-            self.body = self.request_handler.rfile.read(content_length)
-        else:
-            self.body = None
-
-    def _parse_headers(self) -> None:
-        self.headers = {
-            header_name: header_value
-            for header_name, header_value in self.request_handler.headers.items()
-            if header_name not in ['Proxy-Connection']
-        }
-
-    def _parse_cookies(self) -> None:
-        self.cookies = SimpleCookie()
-        self.cookies.load(self.headers.get('Cookie', ''))
-
-    def _parse_method(self):
-        self.method = self.request_handler.command
-
-    def _parse_get_params(self) -> None:
-        self.get_params = parse_qs(urlparse(self.path).query)
-        self.get_params = {
-            k: v[0] if len(v) == 1 else v
-            for k, v in self.get_params.items()
-        }
-
-    def _parse_post_params(self) -> None:
-        content_type = self.headers.get('Content-Type', '')
-        self.post_params = parse_qs(self.body.decode()) \
-            if 'application/x-www-form-urlencoded' in content_type else {}
-
-    def save_to_db(
-        self,
-        db_conn: sqlite3.Connection,
-        db_cursor: sqlite3.Cursor,
-        is_https=False,
-    ) -> int:
-        db_cursor.execute('''
-            INSERT INTO request (method, host, port, path, get_params, headers, cookies, body, post_params, is_https)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            self.method,
-            self.host,
-            self.port,
-            self.path,
-            json.dumps(self.get_params),
-            json.dumps(self.headers),
-            json.dumps({k: v.value for k, v in self.cookies.items()}),
-            self.body,
-            json.dumps(self.post_params),
-            is_https,
-        ))
-        db_conn.commit()
-        return db_cursor.lastrowid
-
-    def __iter__(self):
-        self._injection_points = self._get_injection_points()
-        self._current_injection_index = 0
-        return self
-
-    def __next__(self):
-        if self._current_injection_index >= len(self._injection_points):
-            raise StopIteration
-
-        injection_point = self._injection_points[self._current_injection_index]
-        self._current_injection_index += 1
-
-        modified_request = copy.deepcopy(self)
-        key, value = injection_point
-        if key in modified_request.get_params:
-            modified_request.get_params[key] = value
-        elif key in modified_request.post_params:
-            modified_request.post_params[key] = value
-        elif key in modified_request.headers:
-            modified_request.headers[key] = value
-        elif key == 'Cookie':
-            modified_request.cookies.load(value)
-            if key in modified_request.headers:
-                modified_request.headers[key] = modified_request.cookies.output(
-                    header="Cookie:")
-
-        return modified_request
-
-    def _get_injection_points(self):
-        injection_points = []
-        for key in self.get_params:
-            injection_points.append(
-                (key, self.get_params[key] + SINGLE_QUOTES))
-            injection_points.append(
-                (key, self.get_params[key] + DOUBLE_QUOTES))
-
-        for key in self.post_params:
-            injection_points.append(
-                (key, self.post_params[key] + SINGLE_QUOTES))
-            injection_points.append(
-                (key, self.post_params[key] + DOUBLE_QUOTES))
-
-        for key in self.headers:
-            if key == 'Cookie':
-                continue
-            injection_points.append((key, self.headers[key] + SINGLE_QUOTES))
-            injection_points.append((key, self.headers[key] + DOUBLE_QUOTES))
-
-        if self.cookies:
-            for key in self.cookies:
-                injection_points.append(
-                    ('Cookie', f"{key}={self.cookies[key].value}'"))
-                injection_points.append(
-                    ('Cookie', f"{key}={self.cookies[key].value}\""))
-
-        return injection_points
-
-
-class Response:
-    def __init__(
-        self,
-        response: HTTPResponse = None,
-        **kwargs
-    ) -> None:
-        if response:
-            self.code = response.status
-            self.message = response.reason
-            self.headers = dict(response.getheaders())
-            self.body = response.read().decode()
-
-            self._parse_cookies()
-        elif 'raw' in kwargs:
-            self._parse_raw(kwargs['raw'])
-        else:
-            self.code = kwargs.code
-            self.message = kwargs.message
-            self.headers = kwargs.headers
-            self.set_cookies = kwargs.get('set_cookies', SimpleCookie())
-            self.body = kwargs.body
-
-    @classmethod
-    def from_db(cls, db_row):
-        code, message, headers, set_cookies, body = db_row[2:]
-        return cls(
-            code=code,
-            message=message,
-            headers=headers,
-            set_cookies=SimpleCookie(json.loads(set_cookies)),
-            body=body,
-        )
-
-    @classmethod
-    def from_raw_response(cls, raw_request: bytes):
-        return cls(raw=raw_request)
-
-    def _parse_raw(self, raw_response: bytes):
-        self.headers = {}
-        self.body = b''
-        p = httptools.HttpResponseParser(self)
-        p.feed_data(raw_response)
-
-        self.code = p.get_status_code()
-        self.message = http.HTTPStatus(self.code).phrase
-
-        self._parse_cookies()
-
-    def on_header(self, name: bytes, value: bytes):
-        self.headers[name.decode()] = value.decode()
-
-    def on_body(self, body: bytes):
-        if self.body is None:
-            self.body = b''
-        self.body += body
-
-    def _parse_cookies(self):
-        self.set_cookies = SimpleCookie()
-        self.set_cookies.load(self.headers.get('Set-Cookie', ''))
-
-    def save_to_db(
-        self,
-        request_id: int,
-        db_conn: sqlite3.Connection,
-        db_cursor: sqlite3.Cursor,
-    ):
-        db_cursor.execute('''
-            INSERT INTO response (request_id, code, message, headers, set_cookies, body)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (
-            request_id,
-            self.code,
-            self.message,
-            json.dumps(self.headers),
-            json.dumps(self.set_cookies),
-            self.body,
-        ))
-        db_conn.commit()
-
-    def to_dict(self) -> dict:
-        return {
-            'code': self.code,
-            'message': self.message,
-            'headers': self.headers,
-            'set_cookies': self.set_cookies,
-            'body': self.body,
-        }
 
 
 class ThreadingProxy(ThreadingMixIn, HTTPServer):
@@ -412,7 +82,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 server_hostname=host,
             )
         except socket.error:
-            err = http.HTTPStatus.BAD_GATEWAY
+            err = HTTPStatus.BAD_GATEWAY
             self.send_error(
                 err.value,
                 f"Cannot connect to '{host}:{port}'",
@@ -486,7 +156,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         try:
             request = Request(self)
         except ValueError:
-            err = http.HTTPStatus.BAD_REQUEST
+            err = HTTPStatus.BAD_REQUEST
             self.send_error(
                 err.value,
                 f"Invalid request",
@@ -498,7 +168,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         try:
             response = self.send_request_get_response(request)
         except InvalidURL:
-            err = http.HTTPStatus.BAD_REQUEST
+            err = HTTPStatus.BAD_REQUEST
             self.send_error(
                 err.value,
                 f"Invalid url: '{self.path}'",
@@ -506,7 +176,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             )
             return
         except socket.error:
-            err = http.HTTPStatus.BAD_REQUEST
+            err = HTTPStatus.BAD_REQUEST
             self.send_error(
                 err.value,
                 f"Could not send request to host",
@@ -514,7 +184,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             )
             return
         except Exception as e:
-            err = http.HTTPStatus.BAD_GATEWAY
+            err = HTTPStatus.BAD_GATEWAY
             self.send_error(
                 err.value,
                 f"Cannot connect to '{request.host}:{request.port}'",
@@ -586,7 +256,7 @@ class ProxyServer:
                 code INTEGER,
                 message TEXT,
                 headers TEXT,
-                set_cookies TEXT,
+                set_cookie TEXT,
                 body TEXT,
                 FOREIGN KEY(request_id) REFERENCES requests(id)
             )
