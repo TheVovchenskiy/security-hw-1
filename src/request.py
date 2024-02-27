@@ -161,9 +161,9 @@ class Request:
     def save_to_db(
         self,
         db_conn: sqlite3.Connection,
-        db_cursor: sqlite3.Cursor,
         is_https=False,
     ) -> int:
+        db_cursor = db_conn.cursor()
         db_cursor.execute('''
             INSERT INTO request (method, host, port, path, get_params, headers, cookies, body, post_params, is_https)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

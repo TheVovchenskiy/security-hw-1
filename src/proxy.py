@@ -6,7 +6,11 @@ import socket
 from socketserver import BaseRequestHandler, ThreadingMixIn
 import sqlite3
 import ssl
+import subprocess
+from threading import Lock
 from typing import Any, Callable
+
+import httptools
 
 
 from src.response import Response
@@ -18,17 +22,18 @@ import config
 BUFSIZE = 4096
 
 
+lock = Lock()
+
+
 class ThreadingProxy(ThreadingMixIn, HTTPServer):
     def __init__(
             self,
             server_address: tuple[str | bytes | bytearray, int],
             RequestHandlerClass: Callable[[Any, Any, Any], BaseRequestHandler],
             db_conn,
-            db_cursor,
             bind_and_activate: bool = True,
     ) -> None:
         self.db_conn = db_conn
-        self.db_cursor = db_cursor
         super().__init__(
             server_address,
             RequestHandlerClass,
@@ -40,7 +45,6 @@ class ThreadingProxy(ThreadingMixIn, HTTPServer):
             request,
             client_address,
             self,
-            self.db_cursor,
             self.db_conn,
         )
 
@@ -48,8 +52,7 @@ class ThreadingProxy(ThreadingMixIn, HTTPServer):
 class ProxyRequestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
-    def __init__(self, request, client_address, server, db_cursor, db_conn):
-        self.db_cursor = db_cursor
+    def __init__(self, request, client_address, server, db_conn):
         self.db_conn = db_conn
         super().__init__(request, client_address, server)
 
@@ -73,7 +76,11 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         host, port = self.path.split(COLON)
         port = int(port)
 
-        cert_path, key_path = generate_host_certificate(host)
+        try:
+            cert_path, key_path = generate_host_certificate(host)
+        except Exception:
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
 
         try:
             target_context = ssl.create_default_context()
@@ -104,11 +111,12 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             )
         except Exception as e:
             target_conn.close()
-            raise RuntimeError(
-                'something went wrong while wrapping client connection'
-            ) from e
-
-        self._forward_data(client_conn, target_conn)
+            print(
+                'something went wrong while wrapping client connection: ',
+                e
+            )
+        else:
+            self._forward_data(client_conn, target_conn)
 
     def _forward_data(
         self,
@@ -142,12 +150,20 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 except socket.error:
                     keep_running = False
                     break
-
-        request = Request.from_raw_request(raw_request)
-        request_id = request.save_to_db(self.db_conn, self.db_cursor, True)
-
-        response = Response.from_raw_response(raw_response)
-        response.save_to_db(request_id, self.db_conn, self.db_cursor)
+        
+        if raw_request != b'':
+            try:
+                request = Request.from_raw_request(raw_request)
+                with lock:
+                    request_id = request.save_to_db(self.db_conn, True)
+            except ValueError:
+                print('invalid http request headers')
+            except httptools.parser.errors.HttpParserUpgrade:
+                print('cannot save request to db')
+            else:
+                response = Response.from_raw_response(raw_response)
+                with lock:
+                    response.save_to_db(request_id, self.db_conn)
 
         client_conn.close()
         target_conn.close()
@@ -163,7 +179,9 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 err.description,
             )
             return
-        request_id = request.save_to_db(self.db_conn, self.db_cursor)
+
+        with lock:
+            request_id = request.save_to_db(self.db_conn)
 
         try:
             response = self.send_request_get_response(request)
@@ -220,7 +238,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         self.wfile.write(response.body.encode())
-        response.save_to_db(request_id, self.db_conn, self.db_cursor)
+        with lock:
+            response.save_to_db(request_id, self.db_conn)
 
 
 class ProxyServer:
@@ -231,13 +250,12 @@ class ProxyServer:
             ('', port),
             ProxyRequestHandler,
             self.db_conn,
-            self.db_cursor,
         )
 
     def init_db(self):
         self.db_conn = sqlite3.connect(config.DB, check_same_thread=False)
-        self.db_cursor = self.db_conn.cursor()
-        self.db_cursor.execute('''
+        db_cursor = self.db_conn.cursor()
+        db_cursor.execute('''
             CREATE TABLE IF NOT EXISTS request (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 method TEXT,
@@ -252,7 +270,7 @@ class ProxyServer:
                 is_https BOOLEAN
             )
         ''')
-        self.db_cursor.execute('''
+        db_cursor.execute('''
             CREATE TABLE IF NOT EXISTS response (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 request_id INTEGER,
@@ -275,5 +293,4 @@ class ProxyServer:
         except Exception as e:
             print(f'unexpected error occured: {e}')
         finally:
-            self.db_cursor.close()
             self.db_conn.close()

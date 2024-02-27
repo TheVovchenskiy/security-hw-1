@@ -1,5 +1,6 @@
 import os
 import subprocess
+from threading import Lock
 
 
 CERTS_DIR = 'certs'
@@ -7,6 +8,9 @@ CA_CERT = 'ca.crt'
 CERT_KEY = 'cert.key'
 CA_KEY = 'ca.key'
 SERIAL_NUMBERS_DIR = 'serial_numbers'
+
+
+lock = Lock()
 
 
 if not all(map(os.path.exists, [CA_CERT, CA_KEY, CERTS_DIR])):
@@ -17,7 +21,8 @@ if not all(map(os.path.exists, [CA_CERT, CA_KEY, CERTS_DIR])):
 
 
 def generate_host_certificate(host: str):
-    serial = get_next_serial_number(host)
+    with lock:
+        serial = get_next_serial_number(host)
 
     host_cert_name = f"{host}.crt"
     host_csr_name = f"{host}.csr"
@@ -36,7 +41,10 @@ def generate_host_certificate(host: str):
         "-out", cert_path
     ], check=True)
 
-    os.remove(csr_path)
+    try:
+        os.remove(csr_path)
+    except FileNotFoundError:
+        pass
 
     return cert_path, CERT_KEY
 

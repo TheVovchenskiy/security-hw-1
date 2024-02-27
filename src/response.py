@@ -1,3 +1,4 @@
+import gzip
 from http import HTTPStatus
 from http.client import HTTPResponse
 from http.cookies import SimpleCookie
@@ -20,7 +21,7 @@ class Response:
             self.code = response.status
             self.message = response.reason
             self.headers = dict(response.getheaders())
-            self.body = response.read().decode()
+            self.body = response.read()
 
             self._parse_cookies()
         elif 'raw' in kwargs:
@@ -31,6 +32,15 @@ class Response:
             self.headers = kwargs['headers']
             self.set_cookie = kwargs.get('set_cookie', SimpleCookie())
             self.body = kwargs['body']
+        
+        try:
+            self._handle_content_encoding()
+        except gzip.BadGzipFile:
+            pass
+
+    def _handle_content_encoding(self):
+        if 'Content-Encoding' in self.headers:
+            self.body = gzip.decompress(self.body)
 
     @classmethod
     def from_db(cls, db_row):
@@ -74,8 +84,8 @@ class Response:
         self,
         request_id: int,
         db_conn: sqlite3.Connection,
-        db_cursor: sqlite3.Cursor,
     ):
+        db_cursor = db_conn.cursor()
         db_cursor.execute('''
             INSERT INTO response (request_id, code, message, headers, set_cookie, body)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -94,8 +104,8 @@ class Response:
             'code': self.code,
             'message': self.message,
             'headers': self.headers,
-            'set_cookies': self.set_cookie,
-            'body': self.body,
+            'set_cookies': dict(self.set_cookie),
+            'body': self.body.decode(),
         }
 
     def __eq__(self, __value: object) -> bool:
