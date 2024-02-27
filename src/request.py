@@ -12,6 +12,11 @@ from src.consts import COLON, DOUBLE_QUOTES, SINGLE_QUOTES
 
 COOKIE_HEADER = 'Cookie'
 
+DEFAULT_PORT = {
+    'http': 80,
+    'https': 443,
+}
+
 
 class Request:
     def __init__(
@@ -72,12 +77,10 @@ class Request:
         p.feed_data(raw_request)
 
         self.method = p.get_method().decode()
-        self.host, self.port = self._parse_host_port(
-            self.headers.get('Host', None),
-        )
         self._parse_get_params()
         self._parse_post_params()
         self._parse_cookies()
+        self._parse_host_port_path(self.path)
 
     def on_header(self, name: bytes, value: bytes):
         self.headers[name.decode()] = value.decode()
@@ -93,35 +96,49 @@ class Request:
     def _parse_request(self):
         self._parse_headers()
         self._parse_body()
-        try:
-            self._parse_path()
-            self.host, self.port = self._parse_host_port(
-                self.headers.get('Host', None),
-            )
-        except ValueError as e:
-            raise ValueError from e
         self._parse_cookies()
         self._parse_method()
         self._parse_get_params()
         self._parse_post_params()
+        try:
+            self._parse_host_port_path(self.request_handler.path)
+        except ValueError as e:
+            raise ValueError from e
 
     def _parse_path(self) -> None:
         url = urlparse(self.request_handler.path)
         self.path = url.path if url.path else '/'
 
     @staticmethod
-    def _parse_host_port(host_header_value: str) -> tuple[str, int]:
-        if host_header_value is None:
-            raise ValueError("no header 'Host' in request headers")
+    def parse_host_port(netloc: str) -> tuple[str, int]:
+        host_port = netloc.split(COLON, 1)
+        if len(host_port) == 2:
+            return host_port[0], int(host_port[-1])
 
-        host_header_value = host_header_value.split(COLON, 1)
-        if len(host_header_value) == 2:
-            return host_header_value[0], int(host_header_value[-1])
+        if len(host_port) == 1:
+            return host_port[0], 80
 
-        if len(host_header_value) == 1:
-            return host_header_value[0], 80
-
-        raise ValueError("invalid header 'Host' in request headers")
+    def _parse_host_port_path(self, uri: str):
+        if self.method == 'CONNECT':
+            self.host, self.port = self.parse_host_port(uri)
+        elif self.method == 'OPTIONS':
+            pass
+        else:
+            parsed_url = urlparse(uri)
+            if parsed_url.scheme:
+                self.host = parsed_url.hostname
+                self.port = parsed_url.port \
+                    if parsed_url.port \
+                    else 80
+                self.headers['Host'] = parsed_url.netloc
+                self.path = parsed_url.path
+            elif self.headers['Host']:
+                self.host, self.port = self.parse_host_port(
+                    self.headers['Host'],
+                )
+                self.path = parsed_url.path
+            else:
+                raise ValueError("invalid request")
 
     def _parse_body(self) -> None:
         content_length = self.request_handler.headers['Content-Length']
