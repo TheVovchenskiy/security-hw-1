@@ -26,11 +26,11 @@ class Response:
         elif 'raw' in kwargs:
             self._parse_raw(kwargs['raw'])
         else:
-            self.code = kwargs.code
-            self.message = kwargs.message
-            self.headers = kwargs.headers
+            self.code = kwargs['code']
+            self.message = kwargs['message']
+            self.headers = kwargs['headers']
             self.set_cookie = kwargs.get('set_cookie', SimpleCookie())
-            self.body = kwargs.body
+            self.body = kwargs['body']
 
     @classmethod
     def from_db(cls, db_row):

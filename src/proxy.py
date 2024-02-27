@@ -139,7 +139,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                     else:
                         keep_running = False
                         break
-                except socket.error as e:
+                except socket.error:
                     keep_running = False
                     break
 
@@ -159,7 +159,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             err = HTTPStatus.BAD_REQUEST
             self.send_error(
                 err.value,
-                f"Invalid request",
+                "Invalid request",
                 err.description,
             )
             return
@@ -179,11 +179,11 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             err = HTTPStatus.BAD_REQUEST
             self.send_error(
                 err.value,
-                f"Could not send request to host",
+                "Could not send request to host",
                 err.description,
             )
             return
-        except Exception as e:
+        except Exception:
             err = HTTPStatus.BAD_GATEWAY
             self.send_error(
                 err.value,
@@ -195,7 +195,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         self._transmit_response(response, request_id)
 
     @staticmethod
-    def send_request_get_response(request: Request, is_https=False) -> Response:
+    def send_request_get_response(
+        request: Request,
+        is_https=False,
+    ) -> Response:
         if is_https:
             conn = HTTPSConnection(request.host)
         else:

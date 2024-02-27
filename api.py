@@ -5,10 +5,6 @@ import config
 from src.proxy import ProxyRequestHandler, Request
 
 
-DELAY_ON_EXCEPTION = 0.5
-MAX_ATTEMPTS = 5
-
-
 def get_db():
     if 'db' not in g:
         g.db = sqlite3.connect(config.DB)
@@ -93,7 +89,9 @@ def scan_request(request_id):
         )
         if modified_response != original_response:
             vulnerabilities.append({
-                'param': modified_request._injection_points[original_request._current_injection_index - 1][0],
+                'param': modified_request.injection_points[
+                    original_request.current_injection_index - 1
+                ][0],
                 'type': 'SQL Injection'
             })
 

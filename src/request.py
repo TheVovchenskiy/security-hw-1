@@ -1,5 +1,4 @@
 import copy
-from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
 import json
@@ -99,14 +98,8 @@ class Request:
             self.host, self.port = self._parse_host_port(
                 self.headers.get('Host', None),
             )
-        except ValueError:
-            err = HTTPStatus.BAD_REQUEST
-            self.send_error(
-                err.value,
-                f"Invalid url '{self.request_handler.path}'",
-                err.description,
-            )
-            return
+        except ValueError as e:
+            raise ValueError from e
         self._parse_cookies()
         self._parse_method()
         self._parse_get_params()
@@ -125,11 +118,10 @@ class Request:
         if len(host_header_value) == 2:
             return host_header_value[0], int(host_header_value[-1])
 
-        elif len(host_header_value) == 1:
+        if len(host_header_value) == 1:
             return host_header_value[0], 80
 
-        else:
-            raise ValueError("invalid header 'Host' in request headers")
+        raise ValueError("invalid header 'Host' in request headers")
 
     def _parse_body(self) -> None:
         content_length = self.request_handler.headers['Content-Length']
@@ -142,7 +134,8 @@ class Request:
     def _parse_headers(self) -> None:
         self.headers = {
             header_name: header_value
-            for header_name, header_value in self.request_handler.headers.items()
+            for header_name, header_value
+            in self.request_handler.headers.items()
             if header_name not in ['Proxy-Connection']
         }
 
@@ -190,25 +183,28 @@ class Request:
         return db_cursor.lastrowid
 
     def __iter__(self):
-        self._injection_points = self._get_injection_points()
-        self._current_injection_index = 0
+        self.injection_points = self._get_injection_points()
+        self.current_injection_index = 0
         return self
 
     def __next__(self):
-        if self._current_injection_index >= len(self._injection_points):
+        if self.current_injection_index >= len(self.injection_points):
             raise StopIteration
 
-        injection_point = self._injection_points[self._current_injection_index]
-        self._current_injection_index += 1
+        injection_point = self.injection_points[self.current_injection_index]
+        self.current_injection_index += 1
 
         modified_request = copy.deepcopy(self)
         key, value = injection_point
         if key in modified_request.get_params:
             modified_request.get_params[key] = value
+
         elif key in modified_request.post_params:
             modified_request.post_params[key] = value
+
         elif key in modified_request.headers:
             modified_request.headers[key] = value
+
         elif key == COOKIE_HEADER:
             modified_request.cookies.load(value)
             if key in modified_request.headers:
