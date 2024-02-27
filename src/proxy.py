@@ -2,7 +2,7 @@ import copy
 import http
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from http.client import HTTPConnection, HTTPResponse, InvalidURL
+from http.client import HTTPConnection, HTTPResponse, HTTPSConnection, InvalidURL
 import json
 import select
 import socket
@@ -50,7 +50,18 @@ class Request:
 
     @classmethod
     def from_db(cls, db_row):
-        method, host, port, path, get_params, headers, cookies, body, post_params = db_row[1:]
+        (
+            method,
+            host,
+            port,
+            path,
+            get_params,
+            headers,
+            cookies,
+            body,
+            post_params,
+        ) = db_row[
+            1:10]
         return cls(
             method=method,
             host=host,
@@ -73,7 +84,7 @@ class Request:
         p = httptools.HttpRequestParser(self)
         p.feed_data(raw_request)
 
-        self.method = p.get_method()
+        self.method = p.get_method().decode()
         self.host, self.port = self._parse_host_port(
             self.headers.get('Host', None),
         )
@@ -170,10 +181,11 @@ class Request:
         self,
         db_conn: sqlite3.Connection,
         db_cursor: sqlite3.Cursor,
+        is_https=False,
     ) -> int:
         db_cursor.execute('''
-            INSERT INTO request (method, host, port, path, get_params, headers, cookies, body, post_params)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO request (method, host, port, path, get_params, headers, cookies, body, post_params, is_https)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             self.method,
             self.host,
@@ -183,7 +195,8 @@ class Request:
             json.dumps(self.headers),
             json.dumps({k: v.value for k, v in self.cookies.items()}),
             self.body,
-            json.dumps(self.post_params)
+            json.dumps(self.post_params),
+            is_https,
         ))
         db_conn.commit()
         return db_cursor.lastrowid
@@ -257,21 +270,25 @@ class Response:
             self.message = response.reason
             self.headers = dict(response.getheaders())
             self.body = response.read().decode()
+
+            self._parse_cookies()
         elif 'raw' in kwargs:
             self._parse_raw(kwargs['raw'])
         else:
             self.code = kwargs.code
             self.message = kwargs.message
             self.headers = kwargs.headers
+            self.set_cookies = kwargs.get('set_cookies', SimpleCookie())
             self.body = kwargs.body
 
     @classmethod
     def from_db(cls, db_row):
-        code, message, headers, body = db_row[2:]
+        code, message, headers, set_cookies, body = db_row[2:]
         return cls(
             code=code,
             message=message,
             headers=headers,
+            set_cookies=SimpleCookie(json.loads(set_cookies)),
             body=body,
         )
 
@@ -288,6 +305,8 @@ class Response:
         self.code = p.get_status_code()
         self.message = http.HTTPStatus(self.code).phrase
 
+        self._parse_cookies()
+
     def on_header(self, name: bytes, value: bytes):
         self.headers[name.decode()] = value.decode()
 
@@ -296,6 +315,10 @@ class Response:
             self.body = b''
         self.body += body
 
+    def _parse_cookies(self):
+        self.set_cookies = SimpleCookie()
+        self.set_cookies.load(self.headers.get('Set-Cookie', ''))
+
     def save_to_db(
         self,
         request_id: int,
@@ -303,13 +326,14 @@ class Response:
         db_cursor: sqlite3.Cursor,
     ):
         db_cursor.execute('''
-            INSERT INTO response (request_id, code, message, headers, body)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO response (request_id, code, message, headers, set_cookies, body)
+            VALUES (?, ?, ?, ?, ?, ?)
         ''', (
             request_id,
             self.code,
             self.message,
             json.dumps(self.headers),
+            json.dumps(self.set_cookies),
             self.body,
         ))
         db_conn.commit()
@@ -319,6 +343,7 @@ class Response:
             'code': self.code,
             'message': self.message,
             'headers': self.headers,
+            'set_cookies': self.set_cookies,
             'body': self.body,
         }
 
@@ -449,7 +474,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                     break
 
         request = Request.from_raw_request(raw_request)
-        request_id = request.save_to_db(self.db_conn, self.db_cursor)
+        request_id = request.save_to_db(self.db_conn, self.db_cursor, True)
 
         response = Response.from_raw_response(raw_response)
         response.save_to_db(request_id, self.db_conn, self.db_cursor)
@@ -500,8 +525,11 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         self._transmit_response(response, request_id)
 
     @staticmethod
-    def send_request_get_response(request: Request) -> Response:
-        conn = HTTPConnection(request.host, request.port)
+    def send_request_get_response(request: Request, is_https=False) -> Response:
+        if is_https:
+            conn = HTTPSConnection(request.host)
+        else:
+            conn = HTTPConnection(request.host, request.port)
         conn.request(
             request.method,
             request.path,
@@ -547,7 +575,8 @@ class ProxyServer:
                 headers TEXT,
                 cookies TEXT,
                 body TEXT,
-                post_params TEXT
+                post_params TEXT,
+                is_https BOOLEAN
             )
         ''')
         self.db_cursor.execute('''
@@ -557,6 +586,7 @@ class ProxyServer:
                 code INTEGER,
                 message TEXT,
                 headers TEXT,
+                set_cookies TEXT,
                 body TEXT,
                 FOREIGN KEY(request_id) REFERENCES requests(id)
             )

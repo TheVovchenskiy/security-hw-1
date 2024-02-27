@@ -63,8 +63,9 @@ def repeat_request(request_id):
     if request_data is None:
         return jsonify({"error": "Request not found"}), 404
 
+    is_https = request_data[10]
     request = Request.from_db(request_data)
-    response = ProxyRequestHandler.send_request_get_response(request)
+    response = ProxyRequestHandler.send_request_get_response(request, is_https)
     return jsonify(response.to_dict())
 
 
@@ -77,15 +78,18 @@ def scan_request(request_id):
     if request_data is None:
         return jsonify({"error": "Request not found"}), 404
 
+    is_https = request_data[10]
     original_request = Request.from_db(request_data)
     original_response = ProxyRequestHandler.send_request_get_response(
         original_request,
+        is_https,
     )
 
     vulnerabilities = []
     for modified_request in original_request:
         modified_response = ProxyRequestHandler.send_request_get_response(
             modified_request,
+            is_https,
         )
         if modified_response.code != original_response.code \
                 or len(modified_response.body) != len(original_response.body):
