@@ -7,7 +7,6 @@ import socket
 from socketserver import BaseRequestHandler, ThreadingMixIn
 import sqlite3
 import ssl
-import subprocess
 from threading import Lock
 from typing import Any, Callable
 
@@ -140,7 +139,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         raw_response = b''
 
         while keep_running:
-            readable, _, exceptional = select.select(inputs, [], inputs, 10)
+            readable, _, exceptional = select.select(inputs, [], inputs, 1)
             if exceptional:
                 break
 
@@ -312,7 +311,7 @@ class ProxyServer:
             for _, _, files in os.walk(CERTS_DIR):
                 for file in files:
                     os.remove(os.path.join(CERTS_DIR, file))
-            
+
             for _, _, files in os.walk(SERIAL_NUMBERS_DIR):
                 for file in files:
                     os.remove(os.path.join(SERIAL_NUMBERS_DIR, file))
