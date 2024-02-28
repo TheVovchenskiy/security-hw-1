@@ -274,7 +274,7 @@ class Request:
 
     def to_dict(self) -> dict:
         try:
-            body = self.body.decode()[:50] + '...'
+            body = self.body.decode()
         except UnicodeDecodeError:
             body = 'unsupported content encoding'
         except AttributeError:

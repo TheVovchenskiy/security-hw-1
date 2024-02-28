@@ -16,5 +16,4 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./db:/app/db
-    # command: ["python3", "api.py"]
+      - ./db:/api/db

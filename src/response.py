@@ -34,7 +34,7 @@ class Response:
             self.headers = kwargs['headers']
             self.set_cookie = kwargs.get('set_cookie', SimpleCookie())
             self.body = kwargs['body']
-        
+
         try:
             self._handle_content_encoding()
         except gzip.BadGzipFile:
