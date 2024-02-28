@@ -121,8 +121,6 @@ class Request:
     def _parse_host_port_path(self, uri: str):
         if self.method == 'CONNECT':
             self.host, self.port = self.parse_host_port(uri)
-        elif self.method == 'OPTIONS':
-            pass
         else:
             parsed_url = urlparse(uri)
             if parsed_url.scheme:
