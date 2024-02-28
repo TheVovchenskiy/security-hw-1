@@ -118,16 +118,19 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             )
         else:
             try:
-                self._forward_data(client_conn, target_conn)
+                self._ssl_tunnel(client_conn, target_conn)
             except EOFError:
                 pass
+            finally:
+                client_conn.close()
+                target_conn.close()
 
         try:
             os.remove(cert_path)
         except FileNotFoundError:
             pass
 
-    def _forward_data(
+    def _ssl_tunnel(
         self,
         client_conn: ssl.SSLSocket,
         target_conn: ssl.SSLSocket,
@@ -143,14 +146,14 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             if exceptional:
                 break
 
-            for s in readable:
-                other = target_conn if s is client_conn else client_conn
+            for sock in readable:
+                other = target_conn if sock is client_conn else client_conn
                 try:
-                    data = s.recv(BUFSIZE)
+                    data = sock.recv(BUFSIZE)
                     if data:
-                        if s is client_conn:
+                        if sock is client_conn:
                             raw_request += data
-                        elif s is target_conn:
+                        elif sock is target_conn:
                             raw_response += data
                         other.sendall(data)
                     else:
@@ -178,9 +181,6 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         response.save_to_db(request_id, self.db_conn)
                 except ValueError:
                     pass
-
-        client_conn.close()
-        target_conn.close()
 
     def handle_request(self):
         try:
