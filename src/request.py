@@ -174,7 +174,7 @@ class Request:
         content_type = self.headers.get('Content-Type', '')
         self.post_params = parse_qs(self.body.decode()) \
             if 'application/x-www-form-urlencoded' in content_type \
-                and self.body else {}
+            and self.body else {}
 
     def save_to_db(
         self,
@@ -271,3 +271,20 @@ class Request:
             '',
             self.body.decode()[:10] + '...' if self.body else '',
         ])
+
+    def to_dict(self) -> dict:
+        try:
+            body = self.body.decode()[:50] + '...'
+        except UnicodeDecodeError:
+            body = 'unsupported content encoding'
+        except AttributeError:
+            body = None
+        return {
+            'method': self.method,
+            'host': self.host,
+            'port': self.port,
+            'path': self.path,
+            'headers': self.headers,
+            'cookie': self.cookies,
+            'body': body,
+        }

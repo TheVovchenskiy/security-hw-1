@@ -105,12 +105,16 @@ class Response:
         db_conn.commit()
 
     def to_dict(self) -> dict:
+        try:
+            body = self.body.decode()
+        except UnicodeDecodeError:
+            body = 'unsupported content encoding'
         return {
             'code': self.code,
             'message': self.message,
             'headers': self.headers,
             'set_cookies': dict(self.set_cookie),
-            'body': self.body.decode(),
+            'body': body,
         }
 
     def __eq__(self, __value: object) -> bool:
