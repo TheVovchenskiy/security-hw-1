@@ -7,6 +7,8 @@ import sqlite3
 
 import httptools
 
+from src.consts import NEW_LINE
+
 
 COOKIE_HEADER = 'Set-Cookie'
 
@@ -64,7 +66,10 @@ class Response:
         p.feed_data(raw_response)
 
         self.code = p.get_status_code()
-        self.message = HTTPStatus(self.code).phrase
+        try:
+            self.message = HTTPStatus(self.code).phrase
+        except ValueError as e:
+            raise e
 
         self._parse_cookies()
 
@@ -113,3 +118,14 @@ class Response:
             self.code == __value.code and
             len(self.body) == len(__value.body)
         )
+
+    def __str__(self) -> str:
+        return NEW_LINE.join([
+            f'{self.code}',
+            *[
+                f'{header}: {field_value}'
+                for header, field_value in self.headers.items()
+            ],
+            '',
+            self.body.decode()[:10] + '...' if self.body else '',
+        ])

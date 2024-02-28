@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from http.client import HTTPConnection, HTTPSConnection, InvalidURL
+import os
 import select
 import socket
 from socketserver import BaseRequestHandler, ThreadingMixIn
@@ -16,7 +17,7 @@ import httptools
 from src.response import Response
 from src.request import Request
 from src.consts import COLON, NEW_LINE
-from src.cert_utils import generate_host_certificate
+from src.cert_utils import CERTS_DIR, SERIAL_NUMBERS_DIR, generate_host_certificate
 import config
 
 BUFSIZE = 4096
@@ -78,9 +79,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
         try:
             cert_path, key_path = generate_host_certificate(host)
-        except Exception:
+        except Exception as e:
+            # print('error:', e)
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
-            return
+            raise e
 
         try:
             target_context = ssl.create_default_context()
@@ -116,7 +118,15 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 e
             )
         else:
-            self._forward_data(client_conn, target_conn)
+            try:
+                self._forward_data(client_conn, target_conn)
+            except EOFError:
+                pass
+
+        try:
+            os.remove(cert_path)
+        except FileNotFoundError:
+            pass
 
     def _forward_data(
         self,
@@ -150,7 +160,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 except socket.error:
                     keep_running = False
                     break
-        
+
         if raw_request != b'':
             try:
                 request = Request.from_raw_request(raw_request)
@@ -160,10 +170,15 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 print('invalid http request headers')
             except httptools.parser.errors.HttpParserUpgrade:
                 print('cannot save request to db')
+            except AttributeError:
+                print('cannot save request to db')
             else:
-                response = Response.from_raw_response(raw_response)
-                with lock:
-                    response.save_to_db(request_id, self.db_conn)
+                try:
+                    response = Response.from_raw_response(raw_response)
+                    with lock:
+                        response.save_to_db(request_id, self.db_conn)
+                except ValueError:
+                    pass
 
         client_conn.close()
         target_conn.close()
@@ -237,7 +252,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self.send_header(header, value)
         self.end_headers()
 
-        self.wfile.write(response.body.encode())
+        self.wfile.write(response.body)
         with lock:
             response.save_to_db(request_id, self.db_conn)
 
@@ -294,3 +309,10 @@ class ProxyServer:
             print(f'unexpected error occured: {e}')
         finally:
             self.db_conn.close()
+            for _, _, files in os.walk(CERTS_DIR):
+                for file in files:
+                    os.remove(os.path.join(CERTS_DIR, file))
+            
+            for _, _, files in os.walk(SERIAL_NUMBERS_DIR):
+                for file in files:
+                    os.remove(os.path.join(SERIAL_NUMBERS_DIR, file))

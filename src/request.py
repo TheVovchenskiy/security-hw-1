@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httptools
 
-from src.consts import COLON, DOUBLE_QUOTES, SINGLE_QUOTES
+from src.consts import COLON, DOUBLE_QUOTES, NEW_LINE, SINGLE_QUOTES
 
 
 COOKIE_HEADER = 'Cookie'
@@ -98,12 +98,12 @@ class Request:
         self._parse_body()
         self._parse_cookies()
         self._parse_method()
-        self._parse_get_params()
         self._parse_post_params()
         try:
             self._parse_host_port_path(self.request_handler.path)
         except ValueError as e:
             raise ValueError from e
+        self._parse_get_params()
 
     def _parse_path(self) -> None:
         url = urlparse(self.request_handler.path)
@@ -173,7 +173,8 @@ class Request:
     def _parse_post_params(self) -> None:
         content_type = self.headers.get('Content-Type', '')
         self.post_params = parse_qs(self.body.decode()) \
-            if 'application/x-www-form-urlencoded' in content_type else {}
+            if 'application/x-www-form-urlencoded' in content_type \
+                and self.body else {}
 
     def save_to_db(
         self,
@@ -259,3 +260,14 @@ class Request:
                     (COOKIE_HEADER, f"{key}={self.cookies[key].value}\""))
 
         return injection_points
+
+    def __str__(self) -> str:
+        return NEW_LINE.join([
+            f'{self.method} {self.path}',
+            *[
+                f'{header}: {field_value}'
+                for header, field_value in self.headers.items()
+            ],
+            '',
+            self.body.decode()[:10] + '...' if self.body else '',
+        ])
