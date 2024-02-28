@@ -8,9 +8,13 @@ services:
       - ./db:/app/db
   
   proxy_api:
-    restart: always
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: on-failure
     image:  proxy-api
     ports:
       - "8000:8000"
     volumes:
       - ./db:/app/db
+    # command: ["python3", "api.py"]

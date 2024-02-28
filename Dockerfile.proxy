@@ -10,6 +10,9 @@ COPY main.py .
 COPY config.py .
 COPY src/proxy.py src/proxy.py
 COPY src/cert_utils.py src/cert_utils.py
+COPY src/request.py src/request.py
+COPY src/response.py src/response.py
+COPY src/consts.py src/consts.py
 COPY certs/ certs/
 COPY serial_numbers/ serial_numbers/
 COPY ca.crt ca.crt

@@ -1,14 +1,30 @@
-FROM python:3.10-slim as builder
+FROM python:3.10-alpine
 
-WORKDIR /app
+WORKDIR /api
 
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY api.py .
-COPY config.py .
-RUN mkdir db
 
+COPY . .
+# COPY api.py .
+# COPY config.py .
+# COPY src/proxy.py src/proxy.py
+# COPY src/cert_utils.py src/cert_utils.py
+# COPY src/request.py src/request.py
+# COPY src/response.py src/response.py
+# COPY src/consts.py src/consts.py
+# COPY certs/ certs/
+# COPY serial_numbers/ serial_numbers/
+# COPY ca.crt ca.crt
+# COPY ca.key ca.key
+# COPY cert.key cert.key
 
-CMD [ "python3", "api.py" ]
+# RUN mkdir db
+
+EXPOSE 8000
+
+ENTRYPOINT ["python"]
+
+CMD [ "api.py" ]

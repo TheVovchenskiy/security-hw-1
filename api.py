@@ -2,7 +2,8 @@ from flask import Flask, jsonify, g
 import sqlite3
 
 import config
-from src.proxy import ProxyRequestHandler, Request
+from src.proxy import ProxyRequestHandler
+from src.request import Request
 
 
 def get_db():
@@ -99,7 +100,7 @@ def scan_request(request_id):
 
 
 def run_api_server(port: int = config.API_PORT):
-    app.run(port=port, debug=True)
+    app.run(host='0.0.0.0', port=port, debug=False)
 
 
 if __name__ == '__main__':
